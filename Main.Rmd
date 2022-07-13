@@ -1,0 +1,460 @@
+
+---
+title: "BMT study day 14"
+author: "Dawud"
+date: "01/30/2022"
+output: html_document
+---
+
+```{css, echo=FALSE}
+.watch-out {
+  background-color: rgb(240, 250, 250);
+  border: 1px solid green;
+  font-family:Consolas;
+  
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(class.source = "watch-out")
+```
+
+
+```{r message=F, warning=F}
+# Packages from CRAN:
+if(!require(tidyverse)){install.packages("tidyverse")}
+if(!require(ggpubr)){install.packages("ggpubr")}
+if(!require(vegan)){install.packages("vegan")} # useful ecology package
+if(!require(ape)){install.packages("ape")} # useful ecology package
+if(!require(lmerTest)){install.packages("lmerTest")} # useful package for statistics and longitudinal designs
+if(!require(broom)){install.packages("broom")} #useful package for handling stats
+if(!require(BiocManager)){install.packages("BiocManager")} # required for installing Bioconductor Packages
+if(!require(devtools)){install.packages("devtools")} # required for installing GitHub Packages
+
+
+
+# Packages from Bioconductor:
+if(!require(dada2)){BiocManager::install("dada2")} # The original R package used by QIIME2
+if(!require(ggtree)){BiocManager::install("ggtree")} # Plotting and manipulating trees
+if(!require(philr)){BiocManager::install("philr")} # Testing of phylogenetic signals
+if(!require(ShortRead)){BiocManager::install("ShortRead")}# load library(ShortRead)
+if(!require(phyloseq)){BiocManager::install("phyloseq")}
+if(!require(DESeq2)){BiocManager::install("DESeq2")}
+if(!require(microbiome)){BiocManager::install("microbiome")}
+if(!require(DECIPHER)){BiocManager::install("DECIPHER")}
+if(!require(phangorn)){BiocManager::install("phangorn")}
+if(!require(phangorn)){BiocManager::install("EnhancedVolcano")}
+# Packages from GitHub
+if(!require(qiime2R)){devtools::install_github("jbisanz/qiime2R")} # Package for reading artifacts
+```
+
+
+
+
+## Combine data into a phyloseq object
+```{r 18,warning=F,message=F}
+ps<-qza_to_phyloseq(
+    features="table.qza",
+    tree="rooted-tree.qza",
+    "taxonomy.qza",
+    metadata = "sample-metadata.txt"
+    )
+ps
+
+```
+
+
+
+
+
+
+### Filtering out non-Bacterial OTUs
+```{r 18_1,warning=F,message=F}
+ps1 <- ps %>%  subset_taxa(Kingdom == "Bacteria" & Family != "mitochondria" & Class != "Chloroplast")
+ps1
+```
+
+
+
+```{r 20, message=F, warning=F}
+goodSamplingDepthSubjects <- c("A06","B01","B04","B09","B11","B12","B16","C09")
+filt.ps1 <- prune_samples(row.names(sample_data(ps1)[sample_data(ps1)$Subject %in% goodSamplingDepthSubjects,]),ps1)
+sample_data(filt.ps1)
+filt.ps1.1 <- filt.ps1 %>%  subset_taxa(Kingdom == "Bacteria" & Family != "mitochondria" & Class != "Chloroplast")
+sample_data(filt.ps1)
+sum(is.na(as.data.frame(tax_table(filt.ps1)[,6])$Genus))
+length(as.data.frame(tax_table(filt.ps1)[,6])$Genus)
+1-9/454
+```
+
+
+
+
+### Plot OTUs at pylum level which has more than 1% aundance in each sample
+```{r 18_1,warning=F,message=F}
+ps1_phylum <- filt.ps1 %>%
+  tax_glom(taxrank = "Phylum") %>%                     # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long forma
+ filter(Abundance >= 0.01) %>%                         # Filter out low abundance taxa
+  arrange(desc(Abundance)) 
+# Set colors for plotting
+phylum_colors <- c(
+  "#CBD588", "#5F7FC7", "orange","#DA5724", "#508578", "#CD9BCD",
+   "#AD6F3B", "#673770","#D14285", "#652926", "#C84248", 
+  "#8569D5", "#5E738F","#D1A33D", "#8A7C64", "#599861","#5F7FC7","#CBD588", "#5F7FC7", "orange","#DA5724", "#508578", "#CD9BCD",
+   "#AD6F3B", "#673770","#D14285","#CBD588", "#5F7FC7", "orange","#DA5724", "#508578", "#CD9BCD", "#AD6F3B", "#673770","#CBD588"
+)
+# Plot 
+Figure.phylum <- ggplot(ps1_phylum, aes(x = Subject, y = Abundance, 
+                      fill = Phylum, 
+                      label = sprintf("%1.0f%%", 100*round(Abundance, digits = 2)))) + 
+  facet_wrap(~CariesRisk, scales="free_x", nrow=1) + 
+  theme_bw()+
+  geom_bar(stat = "identity") + 
+  #geom_text(size = 1.7, position = position_stack(vjust = 0.5),aes(fontface=2),col = "white") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(face = "bold", hjust = -0.2),
+        axis.title.y = element_text(face = "bold",vjust = -4)) +
+  scale_fill_manual(values = phylum_colors) + 
+  scale_y_continuous(labels = function(x) paste0(x*100, "%")) +
+  guides(fill = guide_legend(reverse = F, keywidth = 0.8, keyheight = 0.8)) +
+  ylab("Relative Abundance (Phyla > 1%) \n") + xlab("Group by caries risk") +
+  ggtitle("(a) At phylum level ") 
+
+```
+
+```{r}
+ps1_phylum_nofilter <- filt.ps1 %>% tax_glom(taxrank = "Phylum") %>% psmelt() %>% arrange(desc(Abundance))
+ps1_phylum_ra_allsample <- ps1_phylum_nofilter %>%  group_by(Subject) %>%  mutate(rAbundance = Abundance/sum(Abundance)) %>%  filter(rAbundance >= 0.01) %>% ungroup()
+ps1_phylum_ra_allsample <- ps1_phylum_ra_allsample %>% mutate(ra_AS = Abundance/sum(Abundance))
+ps1_phylum_ra_allsample %>% group_by(Phylum) %>%  select(Phylum,ra_AS) %>% summarize_all(sum) %>% arrange(desc(ra_AS))
+```
+
+
+
+### Plot OTUs at Class level which has more than 1% aundance in each sample
+```{r 18_2,warning=F,message=F}
+ps1_class <- filt.ps1 %>%
+  tax_glom(taxrank = "Class") %>%                     # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  filter(Abundance >= 0.01) %>%                         # Filter out low abundance taxa
+  arrange(desc(Abundance)) 
+# Plot 
+figure.class <- ggplot(ps1_class, aes(x = Subject, y = Abundance, 
+                      fill = Class, 
+                      label = sprintf("%1.0f%%", 100*round(Abundance, digits = 2)))) + 
+  facet_wrap(~CariesRisk, scales="free_x", nrow=1) + 
+  theme_bw()+
+  geom_bar(stat = "identity") + 
+  #geom_text(size = 1.7, position = position_stack(vjust = 0.5),aes(fontface=2),col = "white") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+         plot.title = element_text(face = "bold", hjust = -0.2),
+        axis.title.y = element_text(face = "bold",vjust = -4)) +
+  scale_fill_manual(values = phylum_colors) + 
+  scale_y_continuous(labels = function(x) paste0(x*100, "%")) +
+  guides(fill = guide_legend(reverse = F, keywidth = 0.8, keyheight = 0.8)) +
+  ylab("Relative Abundance (Classes > 1%) \n") + xlab("Group by Caries Risk") +
+  ggtitle("(b) At class level") 
+```
+
+### find out the most abundant taxa at class level across all samples when filtered with >= 1% abundance
+```{r}
+ps1_Class_nofilter <- filt.ps1 %>% tax_glom(taxrank = "Class") %>% psmelt() %>% arrange(desc(Class)) 
+ps1_Class_ra_allsample <- ps1_Class_nofilter %>%  group_by(Subject) %>%  mutate(rAbundance = Abundance/sum(Abundance)) %>%  filter(rAbundance >= 0.01) %>% ungroup()
+ps1_Class_ra_allsample <- ps1_Class_ra_allsample %>% mutate(ra_AS = Abundance/sum(Abundance))
+ps1_Class_ra_allsample %>% group_by(Class) %>%  select(Class,ra_AS) %>% summarize_all(sum) %>% arrange(desc(ra_AS)) %>%  .[1:10,] 
+```
+
+### Plot OTUs at Family level which has more than 1% aundance in each sample
+```{r 18_2,warning=F,message=F}
+ps1_family <- filt.ps1 %>%
+  tax_glom(taxrank = "Family") %>%                     # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  filter(Abundance >= 0.01) %>%                         # Filter out low abundance taxa
+  arrange(desc(Abundance)) 
+# Plot 
+figure.family <- ggplot(ps1_family, aes(x = Subject, y = Abundance, 
+                      fill = Family, 
+                      label = sprintf("%1.0f%%", 100*round(Abundance, digits = 2)))) + 
+  facet_wrap(~CariesRisk, scales="free_x", nrow=1) + 
+  theme_bw()+
+  geom_bar(stat = "identity") + 
+  #geom_text(size = 1.7, position = position_stack(vjust = 0.5),aes(fontface=2),col = "white") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(face = "bold", hjust = -0.2),
+        axis.title.y = element_text(face = "bold",vjust = -4)) +
+  scale_fill_manual(values = phylum_colors) + 
+  scale_y_continuous(labels = function(x) paste0(x*100, "%")) +
+  guides(fill = guide_legend(reverse = F, keywidth = 0.8, keyheight = 0.8)) +
+  ylab("Relative Abundance (Familiae > 1%) \n") + xlab("Group by Caries Risk") +
+  ggtitle("(c) At family level") 
+```
+
+
+### find out the most abundant taxa at family level across all samples when filtered with >= 1% abundance
+```{r}
+ps1_Genus_nofilter <- filt.ps1 %>% tax_glom(taxrank = "Family") %>% psmelt() %>% arrange(desc(Family)) 
+ps1_genus_ra_allsample <- ps1_Genus_nofilter %>%  group_by(Subject) %>%  mutate(rAbundance = Abundance/sum(Abundance)) %>%  filter(rAbundance >= 0.01) %>% ungroup()
+ps1_genus_ra_allsample <- ps1_genus_ra_allsample %>% mutate(ra_AS = Abundance/sum(Abundance))
+ps1_genus_ra_allsample %>% group_by(Family) %>%  select(Family,ra_AS) %>% summarize_all(sum) %>% arrange(desc(ra_AS)) %>%  .[1:10,] 
+```
+
+
+
+
+### Plot OTUs at Genus level which has more than 1% aundance in each sample
+```{r 18_2,warning=F,message=F}
+ps1_Genus <- filt.ps1 %>%
+  tax_glom(taxrank = "Genus") %>%                     # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  filter(Abundance >= 0.01) %>%                         # Filter out low abundance taxa
+  arrange(desc(Genus)) 
+# Plot 
+figure.genus <- ggplot(ps1_Genus, aes(x = Subject, y = Abundance, 
+                      fill = Genus, 
+                      label = sprintf("%1.0f%%", 100*round(Abundance, digits = 2)))) + 
+  facet_wrap(~CariesRisk, scales="free_x", nrow=1) + 
+  theme_bw()+
+  geom_bar(stat = "identity") + 
+  #geom_text(size = 1.7, position = position_stack(vjust = 0.5),aes(fontface=2),col = "white") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(face = "bold", hjust = -0.2),
+        axis.title.y = element_text(face = "bold",vjust = -4)) +
+  scale_fill_manual(values = phylum_colors) + 
+  scale_y_continuous(labels = function(x) paste0(x*100, "%")) +
+  guides(fill = guide_legend(reverse = F, keywidth = 0.8, keyheight = 0.8)) +
+  ylab("Relative Abundance (Genera > 1%) \n") + xlab("Group by Caries Risk") +
+  ggtitle("(d) At genus level")
+```
+
+### find out the most abundant taxa at family level across all samples when filtered with >= 1% abundance
+```{r}
+ps1_Genus_nofilter <- filt.ps1 %>% tax_glom(taxrank = "Genus") %>% psmelt() %>% arrange(desc(Genus)) 
+ps1_genus_ra_allsample <- ps1_Genus_nofilter %>%  group_by(Subject) %>%  mutate(rAbundance = Abundance/sum(Abundance)) %>%  filter(rAbundance >= 0.01) %>% ungroup()
+ps1_genus_ra_allsample <- ps1_genus_ra_allsample %>% mutate(ra_AS = Abundance/sum(Abundance))
+ps1_genus_ra_allsample %>% group_by(Genus) %>%  select(Genus,ra_AS) %>% summarize_all(sum) %>% arrange(desc(ra_AS)) %>%  .[1:10,] 
+```
+
+```{r}
+GenusCount <- filt.ps1 %>%
+  tax_glom(taxrank = "Genus") %>%  psmelt()%>%  arrange(desc(Genus))
+sapply(GenusCount, function(x) n_distinct(x))
+```
+
+
+
+
+
+```{r 18,warning=F,message=F}
+ps.rarefied = rarefy_even_depth(ps1, rngseed=1, sample.size=40520, replace=F)
+plot_richness(ps.rarefied, x="CariesRisk", color  = "CariesRisk", measures = c("Chao1", "Shannon","Simpson")) +
+  geom_boxplot() + ggtitle("Alpha Diversity Measure") + 
+  theme_bw() + stat_compare_means(method = "anova", label = "p.signif",label.x = 2,size = 3.5,hide.ns = T) +
+  stat_compare_means(method = "anova", size = 3, label.x  = 1) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        title = element_text(face = "bold"),
+         text=element_text(size=15),
+        legend.title = element_blank(),
+        legend.position = "null") + 
+  geom_point() + xlab("Caries Risk") + ylab("")
+#stat_compare_means(comparisons = list(c("0ppm","10ppm"), c("10ppm","50ppm"), c("0ppm","50ppm"))) + stat_compare_means(label.y = 2.5) + xlab("")
+```
+
+
+## Ordination Plots
+```{r  19, message=F, warning=F}
+ps1.ord <- ordinate(filt.ps1,"PCoA", "bray")
+p2 = plot_ordination(ps1, ps1.ord,color = "CariesRisk") 
+p2 + geom_point(size = 3) + ggtitle("(b) Bray Curtis") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0),
+        title = element_text(face = "bold"),
+        text=element_text(size=13),
+        legend.title = element_blank())
+```
+
+
+
+
+```{r  19, message=F, warning=F}
+ps1.ord <- ordinate(filt.ps1,"PCoA", "unifrac")
+p2 = plot_ordination(ps1, ps1.ord,color = "CariesRisk") 
+p2 + geom_point(size = 3) + 
+  ggtitle("(c) Unweighted UniFrac") +
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0),
+        title = element_text(face = "bold"),
+        text=element_text(size=13),
+        legend.title = element_blank())
+```
+
+
+
+```{r  19, message=F, warning=F}
+ps1.ord <- ordinate(filt.ps1,"PCoA", "wunifrac")
+p2 = plot_ordination(ps1, ps1.ord,color = "CariesRisk") 
+p2 + geom_point(size = 3) + 
+  ggtitle("(d) Weighted UniFrac") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0),
+        title = element_text(face = "bold"),
+        text=element_text(size=13),
+        legend.title = element_blank())
+```
+
+
+
+
+########################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################
+## Differential Abundace with DESeq2 
+
+
+
+
+```{r  19, message=F, warning=F}
+
+diagdds = phyloseq_to_deseq2(filt.ps1, ~ CariesRisk)
+gm_mean = function(x, na.rm=T){
+  exp(sum(log(x[x > 0]), na.rm = na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType = "local")
+res = results(diagdds)
+res = res[order(res$padj, na.last=NA), ]
+alpha = 0.05
+sigtab = res[(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(ps1)[rownames(sigtab), ], "matrix"))
+
+ggplot(sigtab, aes(x=Species, y=log2FoldChange, color=Genus)) + 
+        geom_point(size=4) + coord_flip()
+```
+
+
+
+
+
+
+
+```{r  19, message=F, warning=F}
+ps1.Genus = tax_glom(filt.ps1, taxrank="Genus", NArm=FALSE)
+diagdds = phyloseq_to_deseq2(ps1.Genus, ~ CariesRisk)
+gm_mean = function(x, na.rm=T){
+  exp(sum(log(x[x > 0]), na.rm = na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType = "local")
+res = results(diagdds)
+res = res[order(res$padj, na.last=NA), ]
+alpha = 0.05
+sigtab = res[(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(ps1.Genus)[rownames(sigtab), ], "matrix"))
+
+ggplot(sigtab, aes(x=Genus, y=log2FoldChange, color=Family)) + 
+        geom_point(size=4) + coord_flip()
+
+```
+
+
+
+
+
+
+```{r  19, message=F, warning=F}
+ps1.Family = tax_glom(filt.ps1, taxrank="Family", NArm=FALSE)
+diagdds = phyloseq_to_deseq2(ps1.Family, ~ CariesRisk)
+gm_mean = function(x, na.rm=T){
+  exp(sum(log(x[x > 0]), na.rm = na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType = "local")
+res = results(diagdds)
+res = res[order(res$padj, na.last=NA), ]
+alpha = 0.05
+sigtab = res[(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(ps1.Family)[rownames(sigtab), ], "matrix"))
+ggplot(sigtab, aes(x=Family, y=log2FoldChange, color=Order)) + 
+        geom_point(size=4) + coord_flip()
+
+```
+
+
+
+```{r  19, message=F, warning=F}
+ps1.Order = tax_glom(filt.ps1, taxrank="Order", NArm=FALSE)
+diagdds = phyloseq_to_deseq2(ps1.Order, ~ CariesRisk)
+gm_mean = function(x, na.rm=T){
+  exp(sum(log(x[x > 0]), na.rm = na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType = "local")
+res = results(diagdds)
+res = res[order(res$padj, na.last=NA), ]
+alpha = 0.05
+sigtab = res[(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(ps1.Order)[rownames(sigtab), ], "matrix"))
+ggplot(sigtab, aes(x=Order, y=log2FoldChange, color=Class)) + 
+        geom_point(size=4)+ coord_flip()
+
+```
+
+
+
+```{r  19, message=F, warning=F}
+ps1.Class = tax_glom(filt.ps1, taxrank="Class", NArm=FALSE)
+diagdds = phyloseq_to_deseq2(ps1.Class, ~ CariesRisk)
+gm_mean = function(x, na.rm=T){
+  exp(sum(log(x[x > 0]), na.rm = na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType = "local")
+res = results(diagdds)
+res = res[order(res$padj, na.last=NA), ]
+alpha = 0.05
+sigtab = res[(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(ps1.Class)[rownames(sigtab), ], "matrix"))
+ggplot(sigtab, aes(x=Class, y=log2FoldChange, color=Phylum)) + 
+        geom_point(size=4) + coord_flip()
+
+```
+
+
+
+```{r  19, message=F, warning=F}
+ps1.Phylum = tax_glom(filt.ps1, taxrank="Phylum", NArm=FALSE)
+diagdds = phyloseq_to_deseq2(ps1.Phylum, ~ CariesRisk)
+gm_mean = function(x, na.rm=T){
+  exp(sum(log(x[x > 0]), na.rm = na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType = "local")
+res = results(diagdds)
+res = res[order(res$padj, na.last=NA), ]
+alpha = 0.05
+sigtab = res[(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(ps1.Phylum)[rownames(sigtab), ], "matrix"))
+ggplot(sigtab, aes(x=Phylum, y=log2FoldChange, color=Phylum)) + 
+        geom_point(size=4) + coord_flip()
+
+```
+
+
+
+
+
+
+
+
